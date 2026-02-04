@@ -28,9 +28,9 @@ const SYSTEM_PROMPT = `You are a professional Sora 2 AI video generation expert.
 Generate 4 video segment prompts with continuity from the user's input.
 
 ## Important Rules:
-1. Generate exactly **4 segments**
+1. Generate exactly 4 segments
 2. Each segment must be the specified duration
-3. **Prioritize continuity**: Segment k (k>1) must begin exactly at the final frame of segment k-1
+3. Prioritize continuity: Segment k (k>1) must begin exactly at the final frame of segment k-1
 4. Maintain consistent visual style, tone, lighting, and subject identity
 5. Avoid real people, copyrighted characters, and trademark logos
 6. Describe camera, lighting, motion, and subjects specifically
@@ -51,26 +51,7 @@ Segment 4:
 Context: [Explain continuity from previous segment]
 Prompt: [Prompt text]
 
-## Example:
-User Input: "iPhone 19 intro video"
-Segment Length: 6 seconds
-
-Segment 1:
-First shot introducing the new iPhone 19. Initially, the screen is completely dark. The phone, positioned vertically and facing directly forward, emerges slowly and dramatically out of darkness, gradually illuminated from the center of the screen outward, showcasing a vibrant, colorful, dynamic wallpaper on its edge-to-edge glass display. The style is futuristic, sleek, and premium, appropriate for an official Apple product reveal.
-
-Segment 2:
-Context: Previous scene ended with the phone facing directly forward, clearly displaying its vibrant front screen and colorful wallpaper.
-Prompt: Second shot begins exactly from the final frame of the previous scene, showing the front of the iPhone 19 with its vibrant, colorful display clearly visible. Now, smoothly rotate the phone horizontally, turning it from the front to reveal the back side. Focus specifically on the advanced triple-lens camera module, clearly highlighting its premium materials, reflective metallic surfaces, and detailed lenses. Maintain consistent dramatic lighting, sleek visual style, and luxurious feel matching the official Apple product introduction theme.
-
-Segment 3:
-Context: Previous scene ended clearly showing the back of the iPhone 19, focusing specifically on its advanced triple-lens camera module.
-Prompt: Third shot begins exactly from the final frame of the previous scene, clearly displaying the back side of the iPhone 19, with special emphasis on the triple-lens camera module. Now, have a user's hand gently pick up the phone, naturally rotating it from the back to the front and bringing it upward toward their face. Maintain consistent premium style.
-
-Segment 4:
-Context: Previous scene ended with user holding the phone toward their face.
-Prompt: Final shot begins exactly from the final frame of the previous scene. Clearly show the phone smoothly and quickly unlocking via Face ID recognition, transitioning immediately to a vibrant home screen filled with updated app icons. Finish the scene by subtly fading the home screen into the iconic Apple logo. Keep the visual style consistent, premium, and elegant, suitable for an official Apple product launch.
-
-Your turn. Generate 4 continuous prompts based on the user's input.`;
+Generate 4 continuous prompts based on the user's input.`;
 
 // API Call
 async function callLLMAPI(userMessage) {
@@ -90,6 +71,10 @@ async function callLLMAPI(userMessage) {
         }
 
         const data = await response.json();
+        
+        // デバッグ用にレスポンスをコンソールに出力
+        console.log('API Response:', data);
+        
         return data;
     } catch (error) {
         console.error('API Error:', error);
@@ -116,7 +101,7 @@ async function generatePrompts() {
     try {
         const userMessage = `${SYSTEM_PROMPT}
 
-## User Input:
+User Input:
 Base Prompt: ${basePrompt}
 Segment Length: ${segmentLength} seconds
 Number of Segments: 4
@@ -125,14 +110,22 @@ Generate 4 prompts in the format above.`;
 
         const data = await callLLMAPI(userMessage);
         
-        if (data.status === 'success' && data.text) {
-            parseAndDisplayPrompts(data.text, segmentLength);
+        // より柔軟なレスポンス処理
+        if (data && (data.status === 'success' || data.text || data.response || data.output)) {
+            const responseText = data.text || data.response || data.output || '';
+            
+            if (responseText) {
+                parseAndDisplayPrompts(responseText, segmentLength);
+            } else {
+                throw new Error('Empty response from API');
+            }
         } else {
-            throw new Error('Failed to generate prompts');
+            console.error('Unexpected API response:', data);
+            throw new Error('Invalid API response format');
         }
     } catch (error) {
-        alert('An error occurred. Please try again.');
-        console.error(error);
+        console.error('Generation Error:', error);
+        alert(`An error occurred: ${error.message}\n\nPlease check the console for details and try again.`);
     } finally {
         generateBtn.disabled = false;
         loadingSection.classList.add('hidden');
@@ -143,26 +136,52 @@ Generate 4 prompts in the format above.`;
 function parseAndDisplayPrompts(text, segmentLength) {
     generatedPrompts = [];
     
-    // Split by segment markers
-    const segments = text.split(/Segment\s*[1-4]:/i).filter(s => s.trim());
+    console.log('Parsing text:', text);
     
+    // 複数の分割方法を試す
+    let segments = text.split(/Segment\s*[1-4]:/gi).filter(s => s.trim());
+    
+    // 分割できない場合は段落で分割
     if (segments.length < 4) {
-        // Fallback: split by double newlines
-        const lines = text.split('\n\n').filter(s => s.trim());
-        generatedPrompts = lines.slice(0, 4).map((prompt, index) => ({
-            title: `Segment ${index + 1}`,
-            seconds: parseInt(segmentLength),
-            prompt: prompt.trim()
-        }));
-    } else {
-        generatedPrompts = segments.slice(0, 4).map((segment, index) => ({
-            title: `Segment ${index + 1}`,
-            seconds: parseInt(segmentLength),
-            prompt: segment.trim()
-        }));
+        segments = text.split(/\n\n+/).filter(s => s.trim());
     }
-
-    displayPrompts();
+    
+    // それでも足りない場合は文章を4等分
+    if (segments.length < 4) {
+        const lines = text.split('\n').filter(s => s.trim());
+        const chunkSize = Math.ceil(lines.length / 4);
+        segments = [];
+        for (let i = 0; i < 4; i++) {
+            const chunk = lines.slice(i * chunkSize, (i + 1) * chunkSize).join('\n');
+            if (chunk) segments.push(chunk);
+        }
+    }
+    
+    // 最大4セグメントを作成
+    generatedPrompts = segments.slice(0, 4).map((segment, index) => {
+        // Context部分を削除してPromptのみを抽出
+        const promptMatch = segment.match(/Prompt:\s*([\s\S]*?)(?=\n\nSegment|$)/i);
+        const cleanPrompt = promptMatch ? promptMatch[1].trim() : segment.trim();
+        
+        return {
+            title: `Segment ${index + 1}`,
+            seconds: parseInt(segmentLength),
+            prompt: cleanPrompt
+        };
+    });
+    
+    // 4セグメント未満の場合は警告
+    if (generatedPrompts.length < 4) {
+        console.warn(`Only ${generatedPrompts.length} segments generated`);
+    }
+    
+    console.log('Generated prompts:', generatedPrompts);
+    
+    if (generatedPrompts.length > 0) {
+        displayPrompts();
+    } else {
+        throw new Error('Failed to parse prompts from response');
+    }
 }
 
 // Display prompts
